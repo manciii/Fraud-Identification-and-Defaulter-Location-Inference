@@ -13,8 +13,7 @@ This project has two components:
 Given a customer's credit limits, repayment history, risk scores (CRIFF), KYC status, and 12 months of monthly transaction trends, predict `TARGET = 0` (non-defaulter) or `1` (defaulter).
 
 ### Data
-`HACKATHON_TRAINING_DATA.CSV` — not included in this repo (hackathon-provided data). Place it in the project root before running the notebook.
-
+`HACKATHON_TRAINING_DATA.CSV` — not included in this repo (hackathon-provided data).
 ### Pipeline
 
 **1. Cleaning & feature engineering**
