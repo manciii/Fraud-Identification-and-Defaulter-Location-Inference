@@ -19,36 +19,34 @@ Given a customer's credit limits, repayment history, risk scores (CRIFF), KYC st
 
 **1. Cleaning & feature engineering**
 - Y/N flags → 0/1; text durations (`"2 yrs 3 mon"`) parsed to months
-- Categorical fields (income band, loan category, product type) encoded to ordinal codes
+- Categorical fields (income band, agreg. group, product type) encoded to ordinal codes
 - Custom risk features built from the 12 monthly columns:
   - `overspend_ratio` — how much of a customer's spend exceeded their monthly limit
   - `max_consec_overspend` — longest streak of consecutive overspending months
   - `outbal_slope` / `outbal_is_declining` — trend in outstanding balance over the year
   - `slope_MTD` / `is_debit_declining_MTD` — trend in monthly debit activity
-- 72 raw monthly columns dropped after these summary features are extracted, to reduce dimensionality
+- Raw monthly columns (SDR, SCR, outstanding balance, avg MTD/QTD/YTD) dropped after these summary features are extracted, to reduce dimensionality
 
 **2. Train / validation / test split**
 - 64% train / 16% validation / 20% test, stratified on `TARGET`
-- The validation set exists specifically to tune the classification threshold **without touching the test set** — see "Evaluation methodology" below.
+- The validation set is used specifically to tune the classification threshold, which is then applied once to the held-out test set.
 
 **3. Preprocessing**
 - Median imputation → Yeo-Johnson power transform (handles skew) → Min-Max scaling
 - All transformers fit on train only, applied to val/test
 
 **4. Feature selection**
-- A preliminary XGBoost model is trained and explained with SHAP; the top 30 features by mean absolute SHAP value are kept for the final model
+- A preliminary XGBoost model (trained on SMOTE-Tomek-resampled data) is explained with SHAP; the top 30 features by mean absolute SHAP value are kept for the final model
 
 **5. Final model**
-- LightGBM with `class_weight='balanced'`, tuned via `RandomizedSearchCV` (F1-scored, cross-validated)
+- Two approaches were tried on the top-30 features:
+  - LightGBM trained on **SMOTE-Tomek-resampled** data
+  - LightGBM trained on the **original (unresampled) data** with `class_weight='balanced'`
+- Only the second approach was carried forward, evaluated, and tuned — it produced a well-spread probability distribution (median predicted probability ≈ 0.11, close to the actual ~11% default rate) and was cheaper to run.
+- Final model: LightGBM with `class_weight='balanced'`, tuned via `RandomizedSearchCV` (F1-scored, cross-validated)
 - Classification threshold chosen by maximizing F1 on the **validation** set, then applied once to the held-out test set
 
-### A methodological note (why there's no SMOTE-Tomek here)
-An earlier version of this pipeline used **SMOTE-Tomek** to rebalance the training data before fitting. Two problems were found and fixed:
-
-- **Threshold leakage**: the original threshold was chosen by scanning `precision_recall_curve` on the test set itself, then reporting F1 on that same test set — an optimistic, non-reproducible number. This is fixed by tuning the threshold on a dedicated validation split instead.
-- **Miscalibration from SMOTE-Tomek**: after fixing the leak, the SMOTE-Tomek-trained model's predicted probabilities were checked and found to be severely miscalibrated (median predicted probability of default was **0.999**, vs. an actual ~11% default rate). Synthetic oversampling had made the model overconfident. Replacing SMOTE-Tomek with `class_weight='balanced'` on the real (unresampled) training data produced a properly spread, well-calibrated probability distribution (median ≈ 0.11) at no cost to F1 — and removed a ~20–30 minute step from every run.
-
-### Final results (honestly evaluated: threshold tuned on validation, scored once on test)
+### Final results (threshold tuned on validation, scored once on test)
 
 | Metric | Value |
 |---|---|
@@ -61,9 +59,8 @@ An earlier version of this pipeline used **SMOTE-Tomek** to rebalance the traini
 The model was tuned to favor **recall over precision** — for a bank, missing an actual defaulter is typically costlier than flagging a good customer for extra review, so a recall-oriented operating point was chosen for the headline result. Accuracy is not the primary metric here: the test set is ~89% non-defaulters, so a naive "predict no default for everyone" baseline already scores ~89% while being useless — F1/recall on the minority class is what matters.
 
 ### Requirements
-```
 pandas numpy scikit-learn xgboost lightgbm imbalanced-learn shap joblib
-```
+
 
 ---
 
@@ -96,9 +93,7 @@ Agents run sequentially via a LangGraph `StateGraph` (Agent 1 → 2 → 3 → 4 
 - A bar chart of predicted-location frequency by state is generated at the end of the run
 
 ### Requirements
-```
 pandas selenium webdriver-manager langchain-groq langgraph matplotlib
-```
 
 ### Setup
 1. Set `GROQ_API_KEY` in the notebook (currently a placeholder — do not commit a real key).
@@ -107,20 +102,15 @@ pandas selenium webdriver-manager langchain-groq langgraph matplotlib
 
 ### Notes / limitations
 - The LinkedIn scraper depends on LinkedIn's current page structure (CSS selector) and manual login; it will break silently (`location = None`) if LinkedIn changes its markup, and scraping LinkedIn profiles this way may violate LinkedIn's Terms of Service — review this before using outside a controlled/educational context.
-- Agent scoring rules (point values, thresholds) are heuristic, not learned or validated against ground-truth outcomes — worth revisiting if this is deployed rather than prototyped.
+- Agent scoring rules (point values, thresholds) are heuristic, hardcoded in the prompts, and not learned or validated against ground-truth outcomes — worth revisiting if this is deployed rather than prototyped.
 - The API key is currently hardcoded as a placeholder in the notebook; use an environment variable instead for real use.
 
 ---
 
 ## Repository structure
-```
 .
-├── Task_1_Loan_Default_Prediction.ipynb       # loan default classifier
-├── Task_2_Location_Detection_Agent.ipynb      # multi-agent location inference
-├── checkpoints/                                # cached intermediate results (gitignore this)
-├── backend/ frontend/                          # prototype web interface
+├── Task_1_Loan_Default_Prediction.ipynb # loan default classifier
+├── Task_2_Location_Detection_Agent.ipynb # multi-agent location inference
+├── checkpoints/ # cached intermediate results (gitignore this)
+├── backend/ frontend/ # prototype web interface
 └── README.md
-```
-
-## Disclaimer
-This project was built for a hackathon using synthetic/dummy data. It is a prototype, not a production-ready system — see the methodology notes above for known limitations before extending or deploying it.
